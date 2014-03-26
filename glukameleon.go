@@ -1,81 +1,108 @@
 package main
 
 import (
+	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"github.com/alexandre-normand/glukit/app/apimodel"
-	"github.com/alexandre-normand/glukit/app/bufio"
-	"github.com/voxelbrain/goptions"
+	"github.com/alexandre-normand/glukit/app/util"
+	"github.com/spf13/cobra"
+	"io/ioutil"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 func main() {
-	options := struct {
-		InputDirectory string        `goptions:"-d, --directory, required, description='Directory containing input files'"`
-		Help           goptions.Help `goptions:"-h, --help, description='Show this help'"`
+	var inputDirectory string
+	var outputFormat string
+	var recordType string
 
-		goptions.Verbs
-		Convert struct {
-			RecordType string `goptions:"-r, --record-type, required, description='The type of record to process (calibration, glucose, injection, carb)'"`
-			Format     string `goptions:"-t, --t, required, description='The type of output (json)'"`
-		} `goptions:"convert"`
-	}{ // Defaults
-		Format: "json",
-	}
-	goptions.ParseAndFail(&options)
-
-	files, err := ioutil.ReadDir(options.InputDirectory)
-	if err != nil {
-		log.Fatalf("Can't read contents of %s: %v", options.InputDirectory, err)
+	var glukameleonCmd = &cobra.Command{
+		Use:   "glukameleon",
+		Short: "glukameleon allows to convert dexcom G4 data between different formats",
+		Long: `A Fast and Functional converter of XML to JSON Dexcom G4 data. 
+	       Code can be found at http://github.com/alexandre-normand/glukameleon`,
+		Run: func(cmd *cobra.Command, args []string) {
+			// Do Stuff Here
+		},
 	}
 
-	convert(options.InputDirectory, options.Convert.RecordType, options.Convert.Format)
+	var convertCmd = &cobra.Command{
+		Use:   "convert",
+		Short: "convert takes a directory of files and converts them to the desired format in a unified file",
+		Long:  `Only XML to JSON is support at the moment`,
+		Run: func(cmd *cobra.Command, args []string) {
+			convert(inputDirectory, recordType, outputFormat)
+		},
+	}
+
+	convertCmd.Flags().StringVarP(&inputDirectory, "inputDirectory", "i", "", "Source directory to read from")
+	convertCmd.Flags().StringVarP(&outputFormat, "format", "f", "", "Output format to write to")
+	convertCmd.Flags().StringVarP(&recordType, "recordType", "r", "", "Record type to convert (calibration, glucose, injection, carb)")
+
+	glukameleonCmd.AddCommand(convertCmd)
+	glukameleonCmd.Execute()
 }
 
-func convert(intputDirectory, recordType, format string) {
-	var enc Encoder
+func convert(inputDirectory, recordType, format string) {
+	log.Printf("in Convert")
+	_, err := ioutil.ReadDir(inputDirectory)
+	if err != nil {
+		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
+	}
+
+	var enc *json.Encoder
 	switch format {
 	case "json":
-		enc := json.Encoder(os.Stdout)
+		enc = json.NewEncoder(os.Stdout)
 		break
 	}
 
-	convertFilesToJson(inputDirectory, recordType, enc)
+	convertFiles(inputDirectory, recordType, enc)
 }
 
-func convertFiles(inputDirectory string, recordType string, encoder Encoder) int {
+func convertFiles(inputDirectory string, recordType string, encoder *json.Encoder) {
+	log.Printf("in ConvertFiles")
 	files, err := ioutil.ReadDir(inputDirectory)
 	if err != nil {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
 	}
 
 	for _, f := range files {
-		if f.IsDir() {
-			convertFilesToJson(f.Name(), w)
+		if !f.IsDir() {
+			convertFile(inputDirectory, f.Name(), recordType, encoder)
 		}
-
-		convertFileToJson(f.Name(), w)
 	}
 }
 
-func convertFile(file string, enc Encoder) {
-	files, err := ioutil.ReadDir(inputDirectory)
-	var dec Decoder
-	switch filepath.Ext(file.Name()) {
-	case "xml":
-		dec := xml.Decoder(os.File(file))
+func convertFile(directory string, file string, recordType string, enc *json.Encoder) {
+	var dec *xml.Decoder
+	switch ext := filepath.Ext(file); {
+	case ext == ".xml":
+		fileToConvert, err := os.Open(filepath.Join(directory, file))
+		if err != nil {
+			log.Fatalf("Can't convert file [%s]: %v", filepath.Join(directory, file), err)
+		}
+		dec = xml.NewDecoder(fileToConvert)
 		break
 	default:
-		log.Printf("Skipping unknown filetype: [%s]", name)
+		log.Printf("Skipping unknown filetype: [%s]", ext)
 		break
 	}
 
-	runConvert(dec, enc)
+	if dec != nil {
+		runConvert(recordType, dec, enc)
+	}
 }
 
-func runConvert(recordType string, dec xml.Decoder, enc json.Encoder) {
+func runConvert(recordType string, dec *xml.Decoder, enc *json.Encoder) {
 	for {
 		// Read tokens from the XML document in a stream.
-		t, _ := decoder.Token()
+		t, _ := dec.Token()
 		if t == nil {
-			context.Debugf("finished reading file")
+			//log.Printf("finished reading file")
 			break
 		}
 
@@ -86,7 +113,7 @@ func runConvert(recordType string, dec xml.Decoder, enc json.Encoder) {
 			// ...and its name is "Glucose"
 			switch se.Name.Local {
 			case "Glucose":
-				var read apimodel.Read
+				var read apimodel.Glucose
 				// decode a whole chunk of following XML into the
 				dec.DecodeElement(&read, &se)
 
@@ -95,41 +122,35 @@ func runConvert(recordType string, dec xml.Decoder, enc json.Encoder) {
 				}
 				break
 			case "Event":
-				var event Event
-				decoder.DecodeElement(&event, &se)
-				internalEventTime := util.GetTimeInSeconds(event.InternalTime)
+				var event apimodel.Event
+				dec.DecodeElement(&event, &se)
+				//internalEventTime := util.GetTimeInSeconds(event.InternalTime)
 
 				// Skip everything that's before the last import's read time
-				if internalEventTime > startTime.Unix() {
-					if event.EventType == "Carbs" {
-						var carbQuantityInGrams int
-						fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
-						carb := model.Carb{model.Timestamp{event.EventTime, internalEventTime}, float32(carbQuantityInGrams), model.UNDEFINED_READ}
 
-					} else if event.EventType == "Insulin" {
-						var insulinUnits float32
-						_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
-						if err != nil {
-							util.Propagate(err)
-						}
-						injection := model.Injection{model.Timestamp{event.EventTime, internalEventTime}, float32(insulinUnits), model.UNDEFINED_READ}
+				if event.EventType == "Carbs" {
+					var carbQuantityInGrams int
+					fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
 
-					} else if strings.HasPrefix(event.EventType, "Exercise") {
-						var duration int
-						var intensity string
-						fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
-						exercise := model.Exercise{model.Timestamp{event.EventTime, internalEventTime}, duration, intensity}
-
-						lastExercise = exercise
+				} else if event.EventType == "Insulin" {
+					var insulinUnits float32
+					_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
+					if err != nil {
+						util.Propagate(err)
 					}
+
+				} else if strings.HasPrefix(event.EventType, "Exercise") {
+					var duration int
+					var intensity string
+					fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
 				}
 
 			case "Meter":
 				var c apimodel.Calibration
-				decoder.DecodeElement(&c, &se)
+				dec.DecodeElement(&c, &se)
 
 				if recordType == "calibration" {
-					enc.Encode(&read)
+					enc.Encode(&c)
 				}
 				break
 			}
