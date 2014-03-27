@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+var logger = log.New(os.Stderr, "glukameleon", log.LstdFlags)
+
 func main() {
 	var inputDirectory string
 	var outputFormat string
@@ -47,7 +49,7 @@ func main() {
 }
 
 func convert(inputDirectory, recordType, format string) {
-	log.Printf("in Convert")
+	logger.Printf("in Convert")
 	_, err := ioutil.ReadDir(inputDirectory)
 	if err != nil {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
@@ -64,96 +66,113 @@ func convert(inputDirectory, recordType, format string) {
 }
 
 func convertFiles(inputDirectory string, recordType string, encoder *json.Encoder) {
-	log.Printf("in ConvertFiles")
+	logger.Printf("in ConvertFiles")
 	files, err := ioutil.ReadDir(inputDirectory)
 	if err != nil {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
 	}
 
+	decoders := make([]*xml.Decoder, 0)
 	for _, f := range files {
 		if !f.IsDir() {
-			convertFile(inputDirectory, f.Name(), recordType, encoder)
+			dec := newInputDecoder(inputDirectory, f.Name(), recordType, encoder)
+			if dec != nil {
+				decoders = append(decoders, dec)
+			}
 		}
 	}
+
+	if len(decoders) == 0 {
+		logger.Printf("Nothing to do.")
+		return
+	}
+	runConvert(recordType, decoders, encoder)
 }
 
-func convertFile(directory string, file string, recordType string, enc *json.Encoder) {
-	var dec *xml.Decoder
+func newInputDecoder(directory string, file string, recordType string, enc *json.Encoder) *xml.Decoder {
 	switch ext := filepath.Ext(file); {
 	case ext == ".xml":
 		fileToConvert, err := os.Open(filepath.Join(directory, file))
 		if err != nil {
 			log.Fatalf("Can't convert file [%s]: %v", filepath.Join(directory, file), err)
 		}
-		dec = xml.NewDecoder(fileToConvert)
-		break
-	default:
-		log.Printf("Skipping unknown filetype: [%s]", ext)
-		break
-	}
 
-	if dec != nil {
-		runConvert(recordType, dec, enc)
+		return xml.NewDecoder(fileToConvert)
+	default:
+		logger.Printf("Skipping unknown filetype: [%s]", ext)
+		return nil
 	}
 }
 
-func runConvert(recordType string, dec *xml.Decoder, enc *json.Encoder) {
-	for {
-		// Read tokens from the XML document in a stream.
-		t, _ := dec.Token()
-		if t == nil {
-			//log.Printf("finished reading file")
-			break
-		}
-
-		// Inspect the type of the token just read.
-		switch se := t.(type) {
-		case xml.StartElement:
-			// If we just read a StartElement token
-			// ...and its name is "Glucose"
-			switch se.Name.Local {
-			case "Glucose":
-				var read apimodel.Glucose
-				// decode a whole chunk of following XML into the
-				dec.DecodeElement(&read, &se)
-
-				if recordType == "glucose" {
-					enc.Encode(&read)
-				}
-				break
-			case "Event":
-				var event apimodel.Event
-				dec.DecodeElement(&event, &se)
-				//internalEventTime := util.GetTimeInSeconds(event.InternalTime)
-
-				// Skip everything that's before the last import's read time
-
-				if event.EventType == "Carbs" {
-					var carbQuantityInGrams int
-					fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
-
-				} else if event.EventType == "Insulin" {
-					var insulinUnits float32
-					_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
-					if err != nil {
-						util.Propagate(err)
-					}
-
-				} else if strings.HasPrefix(event.EventType, "Exercise") {
-					var duration int
-					var intensity string
-					fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
-				}
-
-			case "Meter":
-				var c apimodel.Calibration
-				dec.DecodeElement(&c, &se)
-
-				if recordType == "calibration" {
-					enc.Encode(&c)
-				}
+func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
+	calibrations := make([]apimodel.Calibration, 0)
+	glucoseReads := make([]apimodel.Glucose, 0)
+	for _, dec := range decoders {
+		for {
+			// Read tokens from the XML document in a stream.
+			t, _ := dec.Token()
+			if t == nil {
+				logger.Printf("finished reading file")
 				break
 			}
+
+			// Inspect the type of the token just read.
+			switch se := t.(type) {
+			case xml.StartElement:
+				// If we just read a StartElement token
+				// ...and its name is "Glucose"
+				switch se.Name.Local {
+				case "Glucose":
+					var read apimodel.Glucose
+					// decode a whole chunk of following XML into the
+					dec.DecodeElement(&read, &se)
+
+					if recordType == "glucose" {
+						glucoseReads = append(glucoseReads, read)
+					}
+					break
+				case "Event":
+					var event apimodel.Event
+					dec.DecodeElement(&event, &se)
+					//internalEventTime := util.GetTimeInSeconds(event.InternalTime)
+
+					// Skip everything that's before the last import's read time
+
+					if event.EventType == "Carbs" {
+						var carbQuantityInGrams int
+						fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
+
+					} else if event.EventType == "Insulin" {
+						var insulinUnits float32
+						_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
+						if err != nil {
+							util.Propagate(err)
+						}
+
+					} else if strings.HasPrefix(event.EventType, "Exercise") {
+						var duration int
+						var intensity string
+						fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
+					}
+
+				case "Meter":
+					var c apimodel.Calibration
+					dec.DecodeElement(&c, &se)
+
+					if recordType == "calibration" {
+						calibrations = append(calibrations, c)
+					}
+					break
+				}
+			}
 		}
+	}
+
+	if len(calibrations) > 0 {
+		enc.Encode(&calibrations)
+	}
+
+	if len(glucoseReads) > 0 {
+		enc.Encode(&glucoseReads)
 	}
 }
