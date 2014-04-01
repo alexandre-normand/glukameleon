@@ -107,6 +107,9 @@ func newInputDecoder(directory string, file string, recordType string, enc *json
 func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 	calibrations := make([]apimodel.Calibration, 0)
 	glucoseReads := make([]apimodel.Glucose, 0)
+	injections := make([]apimodel.Injection, 0)
+	meals := make([]apimodel.Meal, 0)
+	exercises := make([]apimodel.Exercise, 0)
 	for _, dec := range decoders {
 		for {
 			// Read tokens from the XML document in a stream.
@@ -126,22 +129,22 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 					var read apimodel.Glucose
 					// decode a whole chunk of following XML into the
 					dec.DecodeElement(&read, &se)
-
 					if recordType == "glucose" {
 						glucoseReads = append(glucoseReads, read)
 					}
+
 					break
 				case "Event":
 					var event apimodel.Event
 					dec.DecodeElement(&event, &se)
-					//internalEventTime := util.GetTimeInSeconds(event.InternalTime)
-
-					// Skip everything that's before the last import's read time
-
 					if event.EventType == "Carbs" {
 						var carbQuantityInGrams int
 						fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
+						carb := apimodel.Meal{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(carbQuantityInGrams), 0., 0., 0.}
 
+						if recordType == "carb" {
+							meals = append(meals, carb)
+						}
 					} else if event.EventType == "Insulin" {
 						var insulinUnits float32
 						_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
@@ -149,12 +152,22 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 							util.Propagate(err)
 						}
 
+						injection := apimodel.Injection{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(insulinUnits), "", ""}
+
+						if recordType == "injection" {
+							injections = append(injections, injection)
+						}
 					} else if strings.HasPrefix(event.EventType, "Exercise") {
 						var duration int
 						var intensity string
 						fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
-					}
 
+						exercise := apimodel.Exercise{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, duration, intensity, ""}
+
+						if recordType == "exercise" {
+							exercises = append(exercises, exercise)
+						}
+					}
 				case "Meter":
 					var c apimodel.Calibration
 					dec.DecodeElement(&c, &se)
@@ -162,6 +175,7 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 					if recordType == "calibration" {
 						calibrations = append(calibrations, c)
 					}
+
 					break
 				}
 			}
@@ -174,5 +188,17 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 
 	if len(glucoseReads) > 0 {
 		enc.Encode(&glucoseReads)
+	}
+
+	if len(injections) > 0 {
+		enc.Encode(&injections)
+	}
+
+	if len(exercises) > 0 {
+		enc.Encode(&exercises)
+	}
+
+	if len(meals) > 0 {
+		enc.Encode(&meals)
 	}
 }
