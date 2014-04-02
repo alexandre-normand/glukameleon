@@ -16,10 +16,22 @@ import (
 
 var logger = log.New(os.Stderr, "glukameleon", log.LstdFlags)
 
+const (
+	GLUCOSE     = "glucose"
+	INJECTION   = "injection"
+	MEAL        = "meal"
+	EXERCISE    = "exercise"
+	CALIBRATION = "calibration"
+)
+
 func main() {
 	var inputDirectory string
 	var outputFormat string
-	var recordType string
+	var glucosePath string
+	var calibrationPath string
+	var injectionPath string
+	var mealPath string
+	var exercisePath string
 
 	var glukameleonCmd = &cobra.Command{
 		Use:   "glukameleon",
@@ -36,37 +48,90 @@ func main() {
 		Short: "convert takes a directory of files and converts them to the desired format in a unified file",
 		Long:  `Only XML to JSON is support at the moment`,
 		Run: func(cmd *cobra.Command, args []string) {
-			convert(inputDirectory, recordType, outputFormat)
+			convert(inputDirectory, outputFormat, glucosePath, calibrationPath, injectionPath, mealPath, exercisePath)
 		},
 	}
 
-	convertCmd.Flags().StringVarP(&inputDirectory, "inputDirectory", "i", "", "Source directory to read from")
+	convertCmd.Flags().StringVarP(&inputDirectory, "inputDirectory", "d", "", "Source directory to read from")
 	convertCmd.Flags().StringVarP(&outputFormat, "format", "f", "", "Output format to write to")
-	convertCmd.Flags().StringVarP(&recordType, "recordType", "r", "", "Record type to convert (calibration, glucose, injection, carb)")
+	convertCmd.Flags().StringVarP(&glucosePath, "glucose", "g", "", "Output path for the glucose (not written is omitted)")
+	convertCmd.Flags().StringVarP(&calibrationPath, "calibration", "c", "", "Output path for the calibration reads (not written is omitted)")
+	convertCmd.Flags().StringVarP(&injectionPath, "injection", "i", "", "Output path for the injections (not written is omitted)")
+	convertCmd.Flags().StringVarP(&mealPath, "meal", "m", "", "Output path for the meal data/carbs (not written is omitted)")
+	convertCmd.Flags().StringVarP(&exercisePath, "exercise", "e", "", "Output path for the exercise data (not written is omitted)")
 
 	glukameleonCmd.AddCommand(convertCmd)
 	glukameleonCmd.Execute()
 }
 
-func convert(inputDirectory, recordType, format string) {
-	logger.Printf("in Convert")
+func convert(inputDirectory, format, glucosePath, calibrationPath, injectionPath, mealPath, exercisePath string) {
 	_, err := ioutil.ReadDir(inputDirectory)
 	if err != nil {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
 	}
 
-	var enc *json.Encoder
-	switch format {
-	case "json":
-		enc = json.NewEncoder(os.Stdout)
-		break
-	}
+	encoders := encodersForRecordTypes(glucosePath, calibrationPath, injectionPath, mealPath, exercisePath)
 
-	convertFiles(inputDirectory, recordType, enc)
+	convertFiles(inputDirectory, encoders)
 }
 
-func convertFiles(inputDirectory string, recordType string, encoder *json.Encoder) {
-	logger.Printf("in ConvertFiles")
+func convertFiles(inputDirectory string, encoders map[string]*json.Encoder) {
+	decoders := decodersForFiles(inputDirectory)
+
+	if len(decoders) == 0 {
+		logger.Printf("Nothing to do.")
+		return
+	}
+	runConvert(decoders, encoders)
+}
+
+func encodersForRecordTypes(glucosePath, calibrationPath, injectionPath, mealPath, exercisePath string) map[string]*json.Encoder {
+	var encoders = make(map[string]*json.Encoder)
+	if len(glucosePath) > 0 {
+		writer, err := os.Create(glucosePath)
+		if err != nil {
+			log.Fatalf("Can't open %s for writing: %v", glucosePath, err)
+		}
+
+		encoders[GLUCOSE] = json.NewEncoder(writer)
+	}
+
+	if len(calibrationPath) > 0 {
+		writer, err := os.Create(calibrationPath)
+		if err != nil {
+			log.Fatalf("Can't open %s for writing: %v", calibrationPath, err)
+		}
+		encoders[CALIBRATION] = json.NewEncoder(writer)
+	}
+
+	if len(injectionPath) > 0 {
+		writer, err := os.Create(injectionPath)
+		if err != nil {
+			log.Fatalf("Can't open %s for writing: %v", injectionPath, err)
+		}
+		encoders[INJECTION] = json.NewEncoder(writer)
+	}
+
+	if len(mealPath) > 0 {
+		writer, err := os.Create(mealPath)
+		if err != nil {
+			log.Fatalf("Can't open %s for writing: %v", mealPath, err)
+		}
+		encoders[MEAL] = json.NewEncoder(writer)
+	}
+
+	if len(exercisePath) > 0 {
+		writer, err := os.Create(exercisePath)
+		if err != nil {
+			log.Fatalf("Can't open %s for writing: %v", exercisePath, err)
+		}
+		encoders[EXERCISE] = json.NewEncoder(writer)
+	}
+
+	return encoders
+}
+
+func decodersForFiles(inputDirectory string) []*xml.Decoder {
 	files, err := ioutil.ReadDir(inputDirectory)
 	if err != nil {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
@@ -75,21 +140,17 @@ func convertFiles(inputDirectory string, recordType string, encoder *json.Encode
 	decoders := make([]*xml.Decoder, 0)
 	for _, f := range files {
 		if !f.IsDir() {
-			dec := newInputDecoder(inputDirectory, f.Name(), recordType, encoder)
+			dec := newInputDecoder(inputDirectory, f.Name())
 			if dec != nil {
 				decoders = append(decoders, dec)
 			}
 		}
 	}
 
-	if len(decoders) == 0 {
-		logger.Printf("Nothing to do.")
-		return
-	}
-	runConvert(recordType, decoders, encoder)
+	return decoders
 }
 
-func newInputDecoder(directory string, file string, recordType string, enc *json.Encoder) *xml.Decoder {
+func newInputDecoder(directory string, file string) *xml.Decoder {
 	switch ext := filepath.Ext(file); {
 	case ext == ".xml":
 		fileToConvert, err := os.Open(filepath.Join(directory, file))
@@ -104,7 +165,7 @@ func newInputDecoder(directory string, file string, recordType string, enc *json
 	}
 }
 
-func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
+func runConvert(decoders []*xml.Decoder, encoders map[string]*json.Encoder) {
 	calibrations := make([]apimodel.Calibration, 0)
 	glucoseReads := make([]apimodel.Glucose, 0)
 	injections := make([]apimodel.Injection, 0)
@@ -115,23 +176,16 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 			// Read tokens from the XML document in a stream.
 			t, _ := dec.Token()
 			if t == nil {
-				logger.Printf("finished reading file")
 				break
 			}
 
-			// Inspect the type of the token just read.
 			switch se := t.(type) {
 			case xml.StartElement:
-				// If we just read a StartElement token
-				// ...and its name is "Glucose"
 				switch se.Name.Local {
 				case "Glucose":
 					var read apimodel.Glucose
-					// decode a whole chunk of following XML into the
 					dec.DecodeElement(&read, &se)
-					if recordType == "glucose" {
-						glucoseReads = append(glucoseReads, read)
-					}
+					glucoseReads = append(glucoseReads, read)
 
 					break
 				case "Event":
@@ -140,11 +194,9 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 					if event.EventType == "Carbs" {
 						var carbQuantityInGrams int
 						fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
-						carb := apimodel.Meal{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(carbQuantityInGrams), 0., 0., 0.}
 
-						if recordType == "carb" {
-							meals = append(meals, carb)
-						}
+						carb := apimodel.Meal{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(carbQuantityInGrams), 0., 0., 0.}
+						meals = append(meals, carb)
 					} else if event.EventType == "Insulin" {
 						var insulinUnits float32
 						_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
@@ -153,28 +205,20 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 						}
 
 						injection := apimodel.Injection{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(insulinUnits), "", ""}
+						injections = append(injections, injection)
 
-						if recordType == "injection" {
-							injections = append(injections, injection)
-						}
 					} else if strings.HasPrefix(event.EventType, "Exercise") {
 						var duration int
 						var intensity string
 						fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
 
 						exercise := apimodel.Exercise{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, duration, intensity, ""}
-
-						if recordType == "exercise" {
-							exercises = append(exercises, exercise)
-						}
+						exercises = append(exercises, exercise)
 					}
 				case "Meter":
 					var c apimodel.Calibration
 					dec.DecodeElement(&c, &se)
-
-					if recordType == "calibration" {
-						calibrations = append(calibrations, c)
-					}
+					calibrations = append(calibrations, c)
 
 					break
 				}
@@ -182,23 +226,23 @@ func runConvert(recordType string, decoders []*xml.Decoder, enc *json.Encoder) {
 		}
 	}
 
-	if len(calibrations) > 0 {
-		enc.Encode(&calibrations)
+	if encoder, enabled := encoders[CALIBRATION]; len(calibrations) > 0 && enabled {
+		encoder.Encode(&calibrations)
 	}
 
-	if len(glucoseReads) > 0 {
-		enc.Encode(&glucoseReads)
+	if encoder, enabled := encoders[GLUCOSE]; len(glucoseReads) > 0 && enabled {
+		encoder.Encode(&glucoseReads)
 	}
 
-	if len(injections) > 0 {
-		enc.Encode(&injections)
+	if encoder, enabled := encoders[INJECTION]; len(injections) > 0 && enabled {
+		encoder.Encode(&injections)
 	}
 
-	if len(exercises) > 0 {
-		enc.Encode(&exercises)
+	if encoder, enabled := encoders[EXERCISE]; len(exercises) > 0 && enabled {
+		encoder.Encode(&exercises)
 	}
 
-	if len(meals) > 0 {
-		enc.Encode(&meals)
+	if encoder, enabled := encoders[MEAL]; len(meals) > 0 && enabled {
+		encoder.Encode(&meals)
 	}
 }
