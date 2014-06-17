@@ -13,11 +13,14 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
 var logger = log.New(os.Stderr, "glukameleon", log.LstdFlags)
+
+type ByModDate []os.FileInfo
 
 func main() {
 	var inputDirectory string
@@ -59,31 +62,7 @@ func convert(inputDirectory, outputDirectory string, daysPerFile int) {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
 	}
 
-	convertFiles(inputDirectory, outputDirectory, daysPerFile)
-}
-
-func convertFiles(inputDirectory string, outputDirectory string, daysPerFile int) {
-	logger.Printf("in ConvertFiles")
-	files, err := ioutil.ReadDir(inputDirectory)
-	if err != nil {
-		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
-	}
-
-	decoders := make([]*xml.Decoder, 0)
-	for _, f := range files {
-		if !f.IsDir() {
-			dec := newInputDecoder(inputDirectory, f.Name())
-			if dec != nil {
-				decoders = append(decoders, dec)
-			}
-		}
-	}
-
-	if len(decoders) == 0 {
-		logger.Printf("Nothing to do.")
-		return
-	}
-	runConvert(decoders, outputDirectory, daysPerFile)
+	runConvert(inputDirectory, outputDirectory, daysPerFile)
 }
 
 func newInputDecoder(directory string, file string) *xml.Decoder {
@@ -101,7 +80,19 @@ func newInputDecoder(directory string, file string) *xml.Decoder {
 	}
 }
 
-func runConvert(decoders []*xml.Decoder, outputDirectory string, daysPerFile int) error {
+func (d ByModDate) Len() int {
+	return len(d)
+}
+
+func (d ByModDate) Swap(i, j int) {
+	d[i], d[j] = d[j], d[i]
+}
+
+func (d ByModDate) Less(i, j int) bool {
+	return d[i].ModTime().Unix() < d[j].ModTime().Unix()
+}
+
+func runConvert(inputDirectory string, outputDirectory string, daysPerFile int) error {
 	calibrationFileWriter := filewriter.NewCalibrationReadBatchFileWriter(outputDirectory)
 	calibrationStreamer := streaming.NewCalibrationReadStreamerDuration(calibrationFileWriter, time.Hour*24*time.Duration(daysPerFile))
 
@@ -117,12 +108,30 @@ func runConvert(decoders []*xml.Decoder, outputDirectory string, daysPerFile int
 	exerciseFileWriter := filewriter.NewExerciseBatchFileWriter(outputDirectory)
 	exerciseStreamer := streaming.NewExerciseStreamerDuration(exerciseFileWriter, time.Hour*24*time.Duration(daysPerFile))
 
-	for _, dec := range decoders {
+	dirFiles, err := ioutil.ReadDir(inputDirectory)
+	if err != nil {
+		return err
+	}
+
+	allFiles := make([]os.FileInfo, 0)
+	for _, f := range dirFiles {
+		if !f.IsDir() {
+			allFiles = append(allFiles, f)
+		}
+	}
+
+	sort.Sort(ByModDate(allFiles))
+
+	for _, f := range allFiles {
+		logger.Printf("Converting file [%s]...", f.Name())
+		dec := newInputDecoder(inputDirectory, f.Name())
+		if dec == nil {
+			continue
+		}
 		for {
 			// Read tokens from the XML document in a stream.
 			t, _ := dec.Token()
 			if t == nil {
-				logger.Printf("finished reading file")
 				break
 			}
 
@@ -222,7 +231,7 @@ func runConvert(decoders []*xml.Decoder, outputDirectory string, daysPerFile int
 	}
 
 	// Close the streams and flush anything pending
-	glucoseStreamer, err := glucoseStreamer.Close()
+	glucoseStreamer, err = glucoseStreamer.Close()
 	if err != nil {
 		return err
 	}
