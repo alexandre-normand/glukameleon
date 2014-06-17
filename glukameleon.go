@@ -1,37 +1,31 @@
 package main
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/alexandre-normand/glukameleon/filewriter"
 	"github.com/alexandre-normand/glukit/app/apimodel"
+	"github.com/alexandre-normand/glukit/app/dexcomimporter"
+	"github.com/alexandre-normand/glukit/app/streaming"
 	"github.com/alexandre-normand/glukit/app/util"
 	"github.com/spf13/cobra"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 var logger = log.New(os.Stderr, "glukameleon", log.LstdFlags)
 
-const (
-	GLUCOSE     = "glucose"
-	INJECTION   = "injection"
-	MEAL        = "meal"
-	EXERCISE    = "exercise"
-	CALIBRATION = "calibration"
-)
+type ByModDate []os.FileInfo
 
 func main() {
 	var inputDirectory string
-	var outputFormat string
-	var glucosePath string
-	var calibrationPath string
-	var injectionPath string
-	var mealPath string
-	var exercisePath string
+	var outputDirectory string
+	var daysPerFile int
 
 	var glukameleonCmd = &cobra.Command{
 		Use:   "glukameleon",
@@ -48,106 +42,27 @@ func main() {
 		Short: "convert takes a directory of files and converts them to the desired format in a unified file",
 		Long:  `Only XML to JSON is support at the moment`,
 		Run: func(cmd *cobra.Command, args []string) {
-			convert(inputDirectory, outputFormat, glucosePath, calibrationPath, injectionPath, mealPath, exercisePath)
+			convert(inputDirectory, outputDirectory, daysPerFile)
 		},
 	}
 
-	convertCmd.Flags().StringVarP(&inputDirectory, "inputDirectory", "d", "", "Source directory to read from")
-	convertCmd.Flags().StringVarP(&outputFormat, "format", "f", "", "Output format to write to")
-	convertCmd.Flags().StringVarP(&glucosePath, "glucose", "g", "", "Output path for the glucose (not written is omitted)")
-	convertCmd.Flags().StringVarP(&calibrationPath, "calibration", "c", "", "Output path for the calibration reads (not written is omitted)")
-	convertCmd.Flags().StringVarP(&injectionPath, "injection", "i", "", "Output path for the injections (not written is omitted)")
-	convertCmd.Flags().StringVarP(&mealPath, "meal", "m", "", "Output path for the meal data/carbs (not written is omitted)")
-	convertCmd.Flags().StringVarP(&exercisePath, "exercise", "e", "", "Output path for the exercise data (not written is omitted)")
+	convertCmd.Flags().StringVarP(&inputDirectory, "inputDirectory", "i", "", "Source directory to read from")
+	convertCmd.Flags().StringVarP(&outputDirectory, "outputDirectory", "o", "", "Output directory to write to")
+	convertCmd.Flags().IntVarP(&daysPerFile, "daysperfile", "d", 7, "Number of days to write per output file")
 
+	log.SetOutput(os.Stderr)
 	glukameleonCmd.AddCommand(convertCmd)
 	glukameleonCmd.Execute()
 }
 
-func convert(inputDirectory, format, glucosePath, calibrationPath, injectionPath, mealPath, exercisePath string) {
+func convert(inputDirectory, outputDirectory string, daysPerFile int) {
+	logger.Printf("in Convert")
 	_, err := ioutil.ReadDir(inputDirectory)
 	if err != nil {
 		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
 	}
 
-	encoders := encodersForRecordTypes(glucosePath, calibrationPath, injectionPath, mealPath, exercisePath)
-
-	convertFiles(inputDirectory, encoders)
-}
-
-func convertFiles(inputDirectory string, encoders map[string]*json.Encoder) {
-	decoders := decodersForFiles(inputDirectory)
-
-	if len(decoders) == 0 {
-		logger.Printf("Nothing to do.")
-		return
-	}
-	runConvert(decoders, encoders)
-}
-
-func encodersForRecordTypes(glucosePath, calibrationPath, injectionPath, mealPath, exercisePath string) map[string]*json.Encoder {
-	var encoders = make(map[string]*json.Encoder)
-	if len(glucosePath) > 0 {
-		writer, err := os.Create(glucosePath)
-		if err != nil {
-			log.Fatalf("Can't open %s for writing: %v", glucosePath, err)
-		}
-
-		encoders[GLUCOSE] = json.NewEncoder(writer)
-	}
-
-	if len(calibrationPath) > 0 {
-		writer, err := os.Create(calibrationPath)
-		if err != nil {
-			log.Fatalf("Can't open %s for writing: %v", calibrationPath, err)
-		}
-		encoders[CALIBRATION] = json.NewEncoder(writer)
-	}
-
-	if len(injectionPath) > 0 {
-		writer, err := os.Create(injectionPath)
-		if err != nil {
-			log.Fatalf("Can't open %s for writing: %v", injectionPath, err)
-		}
-		encoders[INJECTION] = json.NewEncoder(writer)
-	}
-
-	if len(mealPath) > 0 {
-		writer, err := os.Create(mealPath)
-		if err != nil {
-			log.Fatalf("Can't open %s for writing: %v", mealPath, err)
-		}
-		encoders[MEAL] = json.NewEncoder(writer)
-	}
-
-	if len(exercisePath) > 0 {
-		writer, err := os.Create(exercisePath)
-		if err != nil {
-			log.Fatalf("Can't open %s for writing: %v", exercisePath, err)
-		}
-		encoders[EXERCISE] = json.NewEncoder(writer)
-	}
-
-	return encoders
-}
-
-func decodersForFiles(inputDirectory string) []*xml.Decoder {
-	files, err := ioutil.ReadDir(inputDirectory)
-	if err != nil {
-		log.Fatalf("Can't read contents of %s: %v", inputDirectory, err)
-	}
-
-	decoders := make([]*xml.Decoder, 0)
-	for _, f := range files {
-		if !f.IsDir() {
-			dec := newInputDecoder(inputDirectory, f.Name())
-			if dec != nil {
-				decoders = append(decoders, dec)
-			}
-		}
-	}
-
-	return decoders
+	runConvert(inputDirectory, outputDirectory, daysPerFile)
 }
 
 func newInputDecoder(directory string, file string) *xml.Decoder {
@@ -165,13 +80,54 @@ func newInputDecoder(directory string, file string) *xml.Decoder {
 	}
 }
 
-func runConvert(decoders []*xml.Decoder, encoders map[string]*json.Encoder) {
-	calibrations := make([]apimodel.Calibration, 0)
-	glucoseReads := make([]apimodel.Glucose, 0)
-	injections := make([]apimodel.Injection, 0)
-	meals := make([]apimodel.Meal, 0)
-	exercises := make([]apimodel.Exercise, 0)
-	for _, dec := range decoders {
+func (d ByModDate) Len() int {
+	return len(d)
+}
+
+func (d ByModDate) Swap(i, j int) {
+	d[i], d[j] = d[j], d[i]
+}
+
+func (d ByModDate) Less(i, j int) bool {
+	return d[i].ModTime().Unix() < d[j].ModTime().Unix()
+}
+
+func runConvert(inputDirectory string, outputDirectory string, daysPerFile int) error {
+	calibrationFileWriter := filewriter.NewCalibrationReadBatchFileWriter(outputDirectory)
+	calibrationStreamer := streaming.NewCalibrationReadStreamerDuration(calibrationFileWriter, time.Hour*24*time.Duration(daysPerFile))
+
+	glucoseFileWriter := filewriter.NewGlucoseReadBatchFileWriter(outputDirectory)
+	glucoseStreamer := streaming.NewGlucoseStreamerDuration(glucoseFileWriter, time.Hour*24*time.Duration(daysPerFile))
+
+	injectionFileWriter := filewriter.NewInjectionBatchFileWriter(outputDirectory)
+	injectionStreamer := streaming.NewInjectionStreamerDuration(injectionFileWriter, time.Hour*24*time.Duration(daysPerFile))
+
+	mealFileWriter := filewriter.NewMealBatchFileWriter(outputDirectory)
+	mealStreamer := streaming.NewMealStreamerDuration(mealFileWriter, time.Hour*24*time.Duration(daysPerFile))
+
+	exerciseFileWriter := filewriter.NewExerciseBatchFileWriter(outputDirectory)
+	exerciseStreamer := streaming.NewExerciseStreamerDuration(exerciseFileWriter, time.Hour*24*time.Duration(daysPerFile))
+
+	dirFiles, err := ioutil.ReadDir(inputDirectory)
+	if err != nil {
+		return err
+	}
+
+	allFiles := make([]os.FileInfo, 0)
+	for _, f := range dirFiles {
+		if !f.IsDir() {
+			allFiles = append(allFiles, f)
+		}
+	}
+
+	sort.Sort(ByModDate(allFiles))
+
+	for _, f := range allFiles {
+		logger.Printf("Converting file [%s]...", f.Name())
+		dec := newInputDecoder(inputDirectory, f.Name())
+		if dec == nil {
+			continue
+		}
 		for {
 			// Read tokens from the XML document in a stream.
 			t, _ := dec.Token()
@@ -179,70 +135,125 @@ func runConvert(decoders []*xml.Decoder, encoders map[string]*json.Encoder) {
 				break
 			}
 
+			// Inspect the type of the token just read.
 			switch se := t.(type) {
 			case xml.StartElement:
 				switch se.Name.Local {
 				case "Glucose":
-					var read apimodel.Glucose
+					var read dexcomimporter.Glucose
+					// decode a whole chunk of following XML into the
 					dec.DecodeElement(&read, &se)
-					glucoseReads = append(glucoseReads, read)
+					glucoseRead, err := dexcomimporter.ConvertXmlGlucoseRead(read)
+					if err != nil {
+						return err
+					}
 
+					if glucoseRead != nil && glucoseRead.Value > 0 {
+						glucoseStreamer, err = glucoseStreamer.WriteGlucoseRead(*glucoseRead)
+
+						if err != nil {
+							return err
+						}
+					}
 					break
 				case "Event":
-					var event apimodel.Event
+					var event dexcomimporter.Event
 					dec.DecodeElement(&event, &se)
-					if event.EventType == "Carbs" {
-						var carbQuantityInGrams int
-						fmt.Sscanf(event.Description, "Carbs %d grams", &carbQuantityInGrams)
+					internalEventTime, err := util.GetTimeUTC(event.InternalTime)
+					if err != nil {
+						log.Printf("Skipping [%s] event [%v], bad internal time [%s]: %v", event.EventType, event, event.InternalTime, err)
+						continue
+					}
 
-						carb := apimodel.Meal{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(carbQuantityInGrams), 0., 0., 0.}
-						meals = append(meals, carb)
+					location := util.GetLocaltimeOffset(event.EventTime, internalEventTime)
+
+					eventTime, err := util.GetTimeWithImpliedLocation(event.EventTime, location)
+					if err != nil {
+						log.Printf("Skipping [%s] event [%v], bad event time [%s]: %v", event.EventType, event, event.EventTime, err)
+						continue
+					}
+
+					if event.EventType == "Carbs" {
+						var mealQuantityInGrams int
+						fmt.Sscanf(event.Description, "Carbs %d grams", &mealQuantityInGrams)
+
+						meal := apimodel.Meal{apimodel.Time{apimodel.GetTimeMillis(eventTime), location.String()}, float32(mealQuantityInGrams), 0., 0., 0.}
+
+						mealStreamer, err = mealStreamer.WriteMeal(meal)
+						if err != nil {
+							return err
+						}
+
 					} else if event.EventType == "Insulin" {
 						var insulinUnits float32
 						_, err := fmt.Sscanf(event.Description, "Insulin %f units", &insulinUnits)
 						if err != nil {
-							util.Propagate(err)
+							log.Printf("Failed to parse event as injection [%s]: %v", event.Description, err)
+						} else {
+							injection := apimodel.Injection{apimodel.Time{apimodel.GetTimeMillis(eventTime), location.String()}, float32(insulinUnits), "", ""}
+
+							injectionStreamer, err = injectionStreamer.WriteInjection(injection)
+
+							if err != nil {
+								return err
+							}
 						}
-
-						injection := apimodel.Injection{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, float32(insulinUnits), "", ""}
-						injections = append(injections, injection)
-
 					} else if strings.HasPrefix(event.EventType, "Exercise") {
 						var duration int
 						var intensity string
 						fmt.Sscanf(event.Description, "Exercise %s (%d minutes)", &intensity, &duration)
 
-						exercise := apimodel.Exercise{apimodel.EventTimestamp{event.DisplayTime, event.InternalTime, event.EventTime}, duration, intensity, ""}
-						exercises = append(exercises, exercise)
+						exercise := apimodel.Exercise{apimodel.Time{apimodel.GetTimeMillis(eventTime), location.String()}, duration, intensity, ""}
+						exerciseStreamer, err = exerciseStreamer.WriteExercise(exercise)
+						if err != nil {
+							return err
+						}
 					}
-				case "Meter":
-					var c apimodel.Calibration
-					dec.DecodeElement(&c, &se)
-					calibrations = append(calibrations, c)
 
+					break
+				case "Meter":
+					var c dexcomimporter.Calibration
+					dec.DecodeElement(&c, &se)
+
+					if calibrationRead, err := dexcomimporter.ConvertXmlCalibrationRead(c); err != nil {
+						return err
+					} else {
+						calibrationStreamer, err = calibrationStreamer.WriteCalibration(*calibrationRead)
+
+						if err != nil {
+							return err
+						}
+					}
 					break
 				}
 			}
 		}
 	}
 
-	if encoder, enabled := encoders[CALIBRATION]; len(calibrations) > 0 && enabled {
-		encoder.Encode(&calibrations)
+	// Close the streams and flush anything pending
+	glucoseStreamer, err = glucoseStreamer.Close()
+	if err != nil {
+		return err
+	}
+	calibrationStreamer, err = calibrationStreamer.Close()
+	if err != nil {
+		return err
 	}
 
-	if encoder, enabled := encoders[GLUCOSE]; len(glucoseReads) > 0 && enabled {
-		encoder.Encode(&glucoseReads)
+	injectionStreamer, err = injectionStreamer.Close()
+	if err != nil {
+		return err
 	}
 
-	if encoder, enabled := encoders[INJECTION]; len(injections) > 0 && enabled {
-		encoder.Encode(&injections)
+	mealStreamer, err = mealStreamer.Close()
+	if err != nil {
+		return err
 	}
 
-	if encoder, enabled := encoders[EXERCISE]; len(exercises) > 0 && enabled {
-		encoder.Encode(&exercises)
+	exerciseStreamer, err = exerciseStreamer.Close()
+	if err != nil {
+		return err
 	}
 
-	if encoder, enabled := encoders[MEAL]; len(meals) > 0 && enabled {
-		encoder.Encode(&meals)
-	}
+	return nil
 }
