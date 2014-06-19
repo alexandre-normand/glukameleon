@@ -23,9 +23,7 @@ func NewCalibrationReadBatchFileWriter(destinationDirectory string) *Calibration
 
 func (w *CalibrationReadBatchFileWriter) WriteCalibrationBatches(p []apimodel.DayOfCalibrationReads) (glukitio.CalibrationBatchWriter, error) {
 	firstElement := p[0].Reads[0]
-	lastBatchReads := p[len(p)-1].Reads
-	lastElement := lastBatchReads[len(lastBatchReads)-1]
-	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("calibrations-%s_%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT), lastElement.GetTime().Format(TIME_FILENAME_FORMAT)))
+	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("calibrationReads-%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT)))
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return w, err
@@ -43,7 +41,7 @@ func (w *CalibrationReadBatchFileWriter) WriteCalibrationBatches(p []apimodel.Da
 
 func (w *CalibrationReadBatchFileWriter) WriteCalibrationBatch(p []apimodel.CalibrationRead) (glukitio.CalibrationBatchWriter, error) {
 	dayOfCalibrationReads := make([]apimodel.DayOfCalibrationReads, 1)
-	dayOfCalibrationReads[0] = apimodel.DayOfCalibrationReads{p}
+	dayOfCalibrationReads[0] = apimodel.NewDayOfCalibrationReads(p)
 	return w.WriteCalibrationBatches(dayOfCalibrationReads)
 }
 

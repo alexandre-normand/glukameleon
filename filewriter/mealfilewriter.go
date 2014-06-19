@@ -23,9 +23,7 @@ func NewMealBatchFileWriter(destinationDirectory string) *MealBatchFileWriter {
 
 func (w *MealBatchFileWriter) WriteMealBatches(p []apimodel.DayOfMeals) (glukitio.MealBatchWriter, error) {
 	firstElement := p[0].Meals[0]
-	lastBatchMeals := p[len(p)-1].Meals
-	lastElement := lastBatchMeals[len(lastBatchMeals)-1]
-	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("meals-%s_%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT), lastElement.GetTime().Format(TIME_FILENAME_FORMAT)))
+	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("meals-%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT)))
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return w, err
@@ -43,7 +41,7 @@ func (w *MealBatchFileWriter) WriteMealBatches(p []apimodel.DayOfMeals) (glukiti
 
 func (w *MealBatchFileWriter) WriteMealBatch(p []apimodel.Meal) (glukitio.MealBatchWriter, error) {
 	dayOfMeals := make([]apimodel.DayOfMeals, 1)
-	dayOfMeals[0] = apimodel.DayOfMeals{p}
+	dayOfMeals[0] = apimodel.NewDayOfMeals(p)
 	return w.WriteMealBatches(dayOfMeals)
 }
 
