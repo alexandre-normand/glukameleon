@@ -23,9 +23,7 @@ func NewExerciseBatchFileWriter(destinationDirectory string) *ExerciseBatchFileW
 
 func (w *ExerciseBatchFileWriter) WriteExerciseBatches(p []apimodel.DayOfExercises) (glukitio.ExerciseBatchWriter, error) {
 	firstElement := p[0].Exercises[0]
-	lastBatchExercises := p[len(p)-1].Exercises
-	lastElement := lastBatchExercises[len(lastBatchExercises)-1]
-	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("exercises-%s_%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT), lastElement.GetTime().Format(TIME_FILENAME_FORMAT)))
+	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("exercises-%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT)))
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return w, err
@@ -43,7 +41,7 @@ func (w *ExerciseBatchFileWriter) WriteExerciseBatches(p []apimodel.DayOfExercis
 
 func (w *ExerciseBatchFileWriter) WriteExerciseBatch(p []apimodel.Exercise) (glukitio.ExerciseBatchWriter, error) {
 	dayOfExercises := make([]apimodel.DayOfExercises, 1)
-	dayOfExercises[0] = apimodel.DayOfExercises{p}
+	dayOfExercises[0] = apimodel.NewDayOfExercises(p)
 	return w.WriteExerciseBatches(dayOfExercises)
 }
 

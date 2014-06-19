@@ -23,9 +23,7 @@ func NewInjectionBatchFileWriter(destinationDirectory string) *InjectionBatchFil
 
 func (w *InjectionBatchFileWriter) WriteInjectionBatches(p []apimodel.DayOfInjections) (glukitio.InjectionBatchWriter, error) {
 	firstElement := p[0].Injections[0]
-	lastBatchInjections := p[len(p)-1].Injections
-	lastElement := lastBatchInjections[len(lastBatchInjections)-1]
-	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("injections-%s_%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT), lastElement.GetTime().Format(TIME_FILENAME_FORMAT)))
+	outputPath := filepath.Join(w.destinationDirectory, fmt.Sprintf("injections-%s.json", firstElement.GetTime().Format(TIME_FILENAME_FORMAT)))
 	f, err := os.Create(outputPath)
 	if err != nil {
 		return w, err
@@ -43,7 +41,7 @@ func (w *InjectionBatchFileWriter) WriteInjectionBatches(p []apimodel.DayOfInjec
 
 func (w *InjectionBatchFileWriter) WriteInjectionBatch(p []apimodel.Injection) (glukitio.InjectionBatchWriter, error) {
 	dayOfInjections := make([]apimodel.DayOfInjections, 1)
-	dayOfInjections[0] = apimodel.DayOfInjections{p}
+	dayOfInjections[0] = apimodel.NewDayOfInjections(p)
 	return w.WriteInjectionBatches(dayOfInjections)
 }
 
