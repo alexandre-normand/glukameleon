@@ -31,7 +31,7 @@ func (w *MealBatchFileWriter) WriteMealBatches(p []apimodel.DayOfMeals) (glukiti
 
 	fileWriter := bufio.NewWriter(f)
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+	err = encoder.Encode(p[0].Meals)
 	if err != nil {
 		return w, err
 	} else {

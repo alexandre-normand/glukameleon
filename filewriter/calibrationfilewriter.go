@@ -31,7 +31,7 @@ func (w *CalibrationReadBatchFileWriter) WriteCalibrationBatches(p []apimodel.Da
 
 	fileWriter := bufio.NewWriter(f)
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+	err = encoder.Encode(p[0].Reads)
 	if err != nil {
 		return w, err
 	} else {

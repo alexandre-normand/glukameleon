@@ -31,7 +31,7 @@ func (w *InjectionBatchFileWriter) WriteInjectionBatches(p []apimodel.DayOfInjec
 
 	fileWriter := bufio.NewWriter(f)
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+	err = encoder.Encode(p[0].Injections)
 	if err != nil {
 		return w, err
 	} else {

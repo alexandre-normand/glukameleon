@@ -31,7 +31,7 @@ func (w *GlucoseReadBatchFileWriter) WriteGlucoseReadBatches(p []apimodel.DayOfG
 
 	fileWriter := bufio.NewWriter(f)
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+	err = encoder.Encode(p[0].Reads)
 	if err != nil {
 		return w, err
 	} else {
