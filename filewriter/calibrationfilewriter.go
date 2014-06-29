@@ -28,10 +28,22 @@ func (w *CalibrationReadBatchFileWriter) WriteCalibrationBatches(p []apimodel.Da
 	if err != nil {
 		return w, err
 	}
+	defer f.Close()
 
 	fileWriter := bufio.NewWriter(f)
+	defer fileWriter.Flush()
+
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+
+	allReads := p[0].Reads
+
+	if len(p) > 1 {
+		for i := range p[1:] {
+			allReads = mergeCalibrationReadBatches(allReads, p[i].Reads)
+		}
+	}
+
+	err = encoder.Encode(allReads)
 	if err != nil {
 		return w, err
 	} else {
@@ -47,4 +59,11 @@ func (w *CalibrationReadBatchFileWriter) WriteCalibrationBatch(p []apimodel.Cali
 
 func (w *CalibrationReadBatchFileWriter) Flush() (glukitio.CalibrationBatchWriter, error) {
 	return w, nil
+}
+
+func mergeCalibrationReadBatches(first, second []apimodel.CalibrationRead) []apimodel.CalibrationRead {
+	newslice := make([]apimodel.CalibrationRead, len(first)+len(second))
+	copy(newslice, first)
+	copy(newslice[len(first):], second)
+	return newslice
 }

@@ -28,10 +28,21 @@ func (w *InjectionBatchFileWriter) WriteInjectionBatches(p []apimodel.DayOfInjec
 	if err != nil {
 		return w, err
 	}
+	defer f.Close()
 
 	fileWriter := bufio.NewWriter(f)
+	defer fileWriter.Flush()
+
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+
+	allInjections := p[0].Injections
+	if len(p) > 1 {
+		for i := range p[1:] {
+			allInjections = mergeInjectionBatches(allInjections, p[i].Injections)
+		}
+	}
+
+	err = encoder.Encode(allInjections)
 	if err != nil {
 		return w, err
 	} else {
@@ -47,4 +58,11 @@ func (w *InjectionBatchFileWriter) WriteInjectionBatch(p []apimodel.Injection) (
 
 func (w *InjectionBatchFileWriter) Flush() (glukitio.InjectionBatchWriter, error) {
 	return w, nil
+}
+
+func mergeInjectionBatches(first, second []apimodel.Injection) []apimodel.Injection {
+	newslice := make([]apimodel.Injection, len(first)+len(second))
+	copy(newslice, first)
+	copy(newslice[len(first):], second)
+	return newslice
 }

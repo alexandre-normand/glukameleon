@@ -28,10 +28,22 @@ func (w *ExerciseBatchFileWriter) WriteExerciseBatches(p []apimodel.DayOfExercis
 	if err != nil {
 		return w, err
 	}
+	defer f.Close()
 
 	fileWriter := bufio.NewWriter(f)
+	defer fileWriter.Flush()
+
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+
+	allExercises := p[0].Exercises
+
+	if len(p) > 1 {
+		for i := range p[1:] {
+			allExercises = mergeExerciseBatches(allExercises, p[i].Exercises)
+		}
+	}
+
+	err = encoder.Encode(allExercises)
 	if err != nil {
 		return w, err
 	} else {
@@ -47,4 +59,11 @@ func (w *ExerciseBatchFileWriter) WriteExerciseBatch(p []apimodel.Exercise) (glu
 
 func (w *ExerciseBatchFileWriter) Flush() (glukitio.ExerciseBatchWriter, error) {
 	return w, nil
+}
+
+func mergeExerciseBatches(first, second []apimodel.Exercise) []apimodel.Exercise {
+	newslice := make([]apimodel.Exercise, len(first)+len(second))
+	copy(newslice, first)
+	copy(newslice[len(first):], second)
+	return newslice
 }

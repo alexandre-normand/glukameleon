@@ -28,10 +28,22 @@ func (w *GlucoseReadBatchFileWriter) WriteGlucoseReadBatches(p []apimodel.DayOfG
 	if err != nil {
 		return w, err
 	}
+	defer f.Close()
 
 	fileWriter := bufio.NewWriter(f)
+	defer fileWriter.Flush()
+
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+
+	allReads := p[0].Reads
+
+	if len(p) > 1 {
+		for i := range p[1:] {
+			allReads = mergeGlucoseReadBatches(allReads, p[i].Reads)
+		}
+	}
+
+	err = encoder.Encode(allReads)
 	if err != nil {
 		return w, err
 	} else {
@@ -47,4 +59,11 @@ func (w *GlucoseReadBatchFileWriter) WriteGlucoseReadBatch(p []apimodel.GlucoseR
 
 func (w *GlucoseReadBatchFileWriter) Flush() (glukitio.GlucoseReadBatchWriter, error) {
 	return w, nil
+}
+
+func mergeGlucoseReadBatches(first, second []apimodel.GlucoseRead) []apimodel.GlucoseRead {
+	newslice := make([]apimodel.GlucoseRead, len(first)+len(second))
+	copy(newslice, first)
+	copy(newslice[len(first):], second)
+	return newslice
 }

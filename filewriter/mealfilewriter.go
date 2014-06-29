@@ -28,10 +28,21 @@ func (w *MealBatchFileWriter) WriteMealBatches(p []apimodel.DayOfMeals) (glukiti
 	if err != nil {
 		return w, err
 	}
+	defer f.Close()
 
 	fileWriter := bufio.NewWriter(f)
+	defer fileWriter.Flush()
+
 	encoder := json.NewEncoder(fileWriter)
-	err = encoder.Encode(p)
+
+	allMeals := p[0].Meals
+	if len(p) > 1 {
+		for i := range p[1:] {
+			allMeals = mergeMealBatches(allMeals, p[i].Meals)
+		}
+	}
+
+	err = encoder.Encode(allMeals)
 	if err != nil {
 		return w, err
 	} else {
@@ -47,4 +58,11 @@ func (w *MealBatchFileWriter) WriteMealBatch(p []apimodel.Meal) (glukitio.MealBa
 
 func (w *MealBatchFileWriter) Flush() (glukitio.MealBatchWriter, error) {
 	return w, nil
+}
+
+func mergeMealBatches(first, second []apimodel.Meal) []apimodel.Meal {
+	newslice := make([]apimodel.Meal, len(first)+len(second))
+	copy(newslice, first)
+	copy(newslice[len(first):], second)
+	return newslice
 }
